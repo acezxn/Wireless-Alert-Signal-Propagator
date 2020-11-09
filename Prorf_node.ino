@@ -31,7 +31,7 @@ float frequency = 915.0; // Broadcast frequency
 String mtype = "";
 int t = millis();
 
-bool listening = false;
+bool listening = true;
 int debounce_timer;
 bool pressing = false;
 
@@ -50,11 +50,11 @@ void init_radio() {
   }
 }
 
-void broadcast(uint8_t *msg) { // send message
+void broadcast(uint8_t *msg, int len) { // send message
   byte sended_cache[RH_RF95_MAX_MESSAGE_LEN];
-  myDriver.send(msg, sizeof(msg));
+  myDriver.send(msg, len);
   myDriver.waitPacketSent();
-  memcpy(sended_cache, (uint8_t *)msg, sizeof(msg));
+  memcpy(sended_cache, (uint8_t *)msg, len);
 }
 
 void msg01_beep() {
@@ -90,13 +90,14 @@ void forward() { // forwarding messages
   // myDriver.send(share_header, sizeof(share_header));
   // myDriver.waitPacketSent();
   // memcpy(sended_cache, (uint8_t* )share_header, sizeof(share_header));
-  if (rf95.waitAvailableTimeout(2000)) {
+  if (rf95.waitAvailableTimeout(50)) {
     if (myDriver.recv(buf, &len)) {
+      SerialUSB.println((char *)buf);
       if (!(millis() - t < 1000)) {              // ignore rapid messages.
         if (memcmp(buf, sended_cache, 5) != 0) { // ignore sent msgs
           t = millis();
           digitalWrite(LED_BUILTIN, HIGH);
-          if (memcmp(buf, msg1, 5) == 0 || memcmp(buf, msg2, 5) == 0) { // check if received message is valid
+          if (memcmp(buf, msg1, 4) == 0 || memcmp(buf, msg2, 4) == 0) { // check if received message is valid
 #ifdef VERBOSE
             SerialUSB.print("Forwarding Message: ");
             SerialUSB.println((char *)buf);
@@ -104,10 +105,10 @@ void forward() { // forwarding messages
             myDriver.send(buf, len);
             myDriver.waitPacketSent();
             digitalWrite(LED_BUILTIN, LOW);
-            if (memcmp(buf, msg1, 5) == 0) { // if received message is msg1
+            if (memcmp(buf, msg1, 4) == 0) { // if received message is msg1
               msg01_beep();
             } else {
-              if (memcmp(buf, msg2, 5) == 0) { // if received message is msg2
+              if (memcmp(buf, msg2, 4) == 0) { // if received message is msg2
                 msg02_beep();
               }
             }
@@ -127,6 +128,7 @@ void generate() { // generate key
   myCipher.setKey(encryptkey, sizeof(encryptkey));
 }
 void share() { // share key
+  digitalWrite(LED_BUILTIN, HIGH);
   for (int i = 5; i < sizeof(share_header); i++) {
     share_header[i] = encryptkey[i - 5];
   }
@@ -135,6 +137,7 @@ void share() { // share key
     rf95.waitPacketSent();
     delay(500);
   }
+  digitalWrite(LED_BUILTIN, LOW);
 }
 void listen() { // listen for key
   while (true) {
@@ -152,6 +155,9 @@ void listen() { // listen for key
         if (is_key) { // if received a key
           for (int i = 5; i < sizeof(share_header); i++) {
             encryptkey[i - 5] = buf[i];
+          }
+          for (int i = 0; i < sizeof(encryptkey); i++) {
+            SerialUSB.print(encryptkey[i]);
           }
           myCipher.setKey(encryptkey, sizeof(encryptkey));
           listening = false;
@@ -188,14 +194,14 @@ void detect_press() {
       millis() - debounce_timer > 100) { // pressed button #1
     debounce_timer = millis();
     pressing = true;
-    broadcast(msg1);
+    broadcast(msg1, 5);
 
   } else {
     if (digitalRead(secondpin) && !pressing && // pressed button #2
         millis() - debounce_timer > 100) {
       debounce_timer = millis();
       pressing = true;
-      broadcast(msg2);
+      broadcast(msg2, 5);
     } else {
       if (!digitalRead(firstpin) && // both not pressing
           !digitalRead(secondpin)) {
@@ -223,9 +229,16 @@ void loop() {
 #ifdef VERBOSE
       SerialUSB.println("Key received");
 #endif
+      digitalWrite(LED_BUILTIN, HIGH);
       firstrun = false;
     }
   }
   detect_press();
   forward();
+  // if (!listening && !firstrun) {
+  //   broadcast(msg1, 5);
+  //   digitalWrite(LED_BUILTIN, HIGH);
+  //   delay(1000);
+  //   digitalWrite(LED_BUILTIN, LOW);
+  // }
 }
