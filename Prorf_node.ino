@@ -6,6 +6,7 @@
 #include <SPI.h>
 #include <Speck.h>
 #include <string.h>
+#include <time.h>
 
 byte encryptkey[16] = {1, 2,  3,  4,  5,  6,  7,  8,
                        9, 10, 11, 12, 13, 14, 15, 16}; // The very secret key
@@ -26,12 +27,14 @@ int LED = 13; // Status LED is on pin 13
 int firstpin = 2;
 int secondpin = 3;
 int buzzer = 5;
+int jumper = A2;
 
 float frequency = 915.0; // Broadcast frequency
 String mtype = "";
 int t = millis();
+int counter = millis();
 
-bool listening = true;
+bool listening = false;
 int debounce_timer;
 bool pressing = false;
 
@@ -51,37 +54,43 @@ void init_radio() {
 }
 
 void broadcast(uint8_t *msg, int len) { // send message
-  byte sended_cache[RH_RF95_MAX_MESSAGE_LEN];
-  myDriver.send(msg, len);
-  myDriver.waitPacketSent();
-  memcpy(sended_cache, (uint8_t *)msg, len);
+  SerialUSB.println(millis()-counter);
+  if (millis()-counter > 1000){
+    counter = millis();
+    myDriver.send(msg, len);
+    myDriver.waitPacketSent();
+    memcpy(sended_cache, (uint8_t *)msg, len);
+    SerialUSB.print("Sent using key: ");
+    for (int i = 0; i < sizeof(encryptkey); i++)
+    {
+        SerialUSB.print(encryptkey[i]);
+    }
+    SerialUSB.println();
+    SerialUSB.print("caching: ");
+    SerialUSB.println((char *)sended_cache);
+  }
 }
 
 void msg01_beep() {
   tone(buzzer, 2000);
-  noTone(buzzer);
   delay(100);
   tone(buzzer, 2000);
-  noTone(buzzer);
   delay(100);
   tone(buzzer, 2000);
-  noTone(buzzer);
   delay(100);
   tone(buzzer, 2000);
-  noTone(buzzer);
   delay(50);
+  noTone(buzzer);
 }
 
 void msg02_beep() {
-  tone(buzzer, 1000);
-  noTone(buzzer);
+  tone(buzzer, 1500);
   delay(150);
-  tone(buzzer, 1000);
-  noTone(buzzer);
+  tone(buzzer, 1500);
   delay(150);
-  tone(buzzer, 1000);
-  noTone(buzzer);
+  tone(buzzer, 1500);
   delay(50);
+  noTone(buzzer);
 }
 
 void forward() { // forwarding messages
@@ -90,10 +99,21 @@ void forward() { // forwarding messages
   // myDriver.send(share_header, sizeof(share_header));
   // myDriver.waitPacketSent();
   // memcpy(sended_cache, (uint8_t* )share_header, sizeof(share_header));
+  if (millis()-counter > 1000) {
+    uint8_t share_header[21] = {'n', 'o', 'n', 'r', 'e'};
+    memcpy(sended_cache, (uint8_t* )share_header, sizeof(share_header));
+    // SerialUSB.println("cache deleted");
+    // SerialUSB.print("cache: ");
+    // SerialUSB.println((char *)sended_cache);
+  }
   if (rf95.waitAvailableTimeout(50)) {
     if (myDriver.recv(buf, &len)) {
       SerialUSB.println((char *)buf);
       if (!(millis() - t < 1000)) {              // ignore rapid messages.
+        // SerialUSB.println("");
+        // SerialUSB.print("cache: ");
+        // SerialUSB.println((char *)sended_cache);
+        // SerialUSB.println(millis()-counter);
         if (memcmp(buf, sended_cache, 5) != 0) { // ignore sent msgs
           t = millis();
           digitalWrite(LED_BUILTIN, HIGH);
@@ -105,13 +125,23 @@ void forward() { // forwarding messages
             myDriver.send(buf, len);
             myDriver.waitPacketSent();
             digitalWrite(LED_BUILTIN, LOW);
-            if (memcmp(buf, msg1, 4) == 0) { // if received message is msg1
-              msg01_beep();
-            } else {
-              if (memcmp(buf, msg2, 4) == 0) { // if received message is msg2
-                msg02_beep();
-              }
+            for (int i = 0; i < sizeof(msg1); i++) {
+                SerialUSB.print("MSG1: ");
+                SerialUSB.println( (int) msg1[i]);
+                SerialUSB.print("BUFF: ");
+                SerialUSB.println(buf[i]);
             }
+                if (memcmp(buf, msg1, sizeof(msg1)) == 0)
+                { // if received message is msg1
+                    msg01_beep();
+                }
+                else
+                {
+                    if (memcmp(buf, msg2, sizeof(msg2)) == 0)
+                    { // if received message is msg2
+                        msg02_beep();
+                    }
+                }
           }
         }
       }
@@ -120,10 +150,12 @@ void forward() { // forwarding messages
 }
 
 void generate() { // generate key
-  long randNumber;
-  for (int i = 0; i < sizeof(encryptkey); i++) {
-    randNumber = random(0, 256);
-    encryptkey[i] = randNumber;
+    srand(analogRead(0));
+    long randNumber;
+    for (int i = 0; i < sizeof(encryptkey); i++)
+    {
+        randNumber = rand() % 257;
+        encryptkey[i] = randNumber;
   }
   myCipher.setKey(encryptkey, sizeof(encryptkey));
 }
@@ -169,24 +201,26 @@ void listen() { // listen for key
 }
 
 void setup() {
-  pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(firstpin, INPUT);
-  pinMode(secondpin, INPUT);
-  SerialUSB.begin(115200); // 9600
-  SerialUSB.println("RFM Client!");
+    pinMode(LED_BUILTIN, OUTPUT);
+    pinMode(firstpin, INPUT);
+    pinMode(secondpin, INPUT);
+    pinMode(jumper, INPUT_PULLUP);
+    SerialUSB.begin(115200); // 9600
+    SerialUSB.println("RFM Client!");
 
-  // Initialize the Radio.
-  init_radio();
+    // Initialize the Radio.
+    init_radio();
 
-  rf95.setModemConfig(RH_RF95::Bw500Cr45Sf128); // High bandwidth
-  // rf95.setModemConfig(RH_RF95::Bw31_25Cr48Sf512); //Long range
-  // Set frequency
-  rf95.setFrequency(frequency);
-  rf95.setTxPower(23, false);
-  myCipher.setKey(encryptkey, sizeof(encryptkey));
+    rf95.setModemConfig(RH_RF95::Bw500Cr45Sf128); // High bandwidth
+    // rf95.setModemConfig(RH_RF95::Bw31_25Cr48Sf512); //Long range
+    // Set frequency
+    rf95.setFrequency(frequency);
+    rf95.setTxPower(23, false);
+    myCipher.setKey(encryptkey, sizeof(encryptkey));
 
-  // generate(); // uncomment this to generate key automatically every start
-  debounce_timer = millis();
+    // generate(); // uncomment this to generate key automatically every start
+    debounce_timer = millis();
+    pinMode(buzzer, OUTPUT);
 }
 
 void detect_press() {
@@ -215,7 +249,15 @@ bool firstrun = true;
 
 void loop() {
   // listening: no jumper
+  if (firstrun) {
+    if (digitalRead(jumper)) {
+      listening = false;
+    } else {
+      listening = true;
+    }
+  }
   if (!listening && firstrun) {
+      SerialUSB.println("Sender");
     generate();
     share();
 #ifdef VERBOSE
@@ -225,7 +267,9 @@ void loop() {
 
   } else {
     if (firstrun) {
-      listen(); // listen until receiving a key
+        SerialUSB.println("listener");
+
+        listen(); // listen until receiving a key
 #ifdef VERBOSE
       SerialUSB.println("Key received");
 #endif
